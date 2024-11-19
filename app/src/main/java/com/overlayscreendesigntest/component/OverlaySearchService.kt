@@ -1,16 +1,24 @@
 package com.overlayscreendesigntest.component
 
+import android.app.Activity.RESULT_CANCELED
+import android.app.Activity.RESULT_OK
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
-import android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+import android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+import android.graphics.Bitmap
 import android.graphics.PixelFormat
+import android.media.ImageReader
+import android.media.projection.MediaProjection
+import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
 import android.os.IBinder
+import android.provider.MediaStore
 import android.util.DisplayMetrics
 import android.util.Log
 import android.view.Gravity
@@ -30,6 +38,10 @@ import com.overlayscreendesigntest.data.SimilarProduct
 import com.overlayscreendesigntest.networking.RetrofitClient
 import com.overlayscreendesigntest.screens.WebViewActivity
 import com.overlayscreendesigntest.screens.adapter.OverlayListAdapter
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.MultipartBody
+import okhttp3.RequestBody
+import okhttp3.RequestBody.Companion.asRequestBody
 import retrofit2.Call
 import retrofit2.Callback
 import retrofit2.Response
@@ -50,23 +62,127 @@ class OverlaySearchService : Service() {
     private lateinit var adapter: OverlayListAdapter
     private lateinit var progressBar: ProgressBar
 
+    private lateinit var mediaProjectionManager: MediaProjectionManager
+    private var mediaProjection: MediaProjection? = null
+    private var imageReader: ImageReader? = null
+
     override fun onBind(intent: Intent?): IBinder? {
         return null
     }
 
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == "ACTION_MEDIA_PROJECTION_GRANTED") {
+            val resultCode = intent.getIntExtra("resultCode", RESULT_CANCELED)
+            val data = intent.getParcelableExtra<Intent>("data")
+            if (resultCode == RESULT_OK && data != null) {
+                mediaProjection = mediaProjectionManager.getMediaProjection(resultCode, data)
+                setupMediaProjection()
+            }
+        }
+        return START_STICKY
+    }
+
+    private fun setupMediaProjection() {
+        val metrics = DisplayMetrics()
+        val windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        windowManager.defaultDisplay.getMetrics(metrics)
+
+        val width = metrics.widthPixels
+        val height = metrics.heightPixels
+        val density = metrics.densityDpi
+
+        imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
+
+        mediaProjection?.createVirtualDisplay(
+            "ScreenCapture",
+            width,
+            height,
+            density,
+            0,
+            imageReader?.surface,
+            null,
+            null
+        )
+    }
+
+    private fun captureScreenshot() {
+        val image = imageReader?.acquireLatestImage() ?: return
+
+        val planes = image.planes
+        val buffer = planes[0].buffer
+        val width = image.width
+        val height = image.height
+        val pixelStride = planes[0].pixelStride
+        val rowStride = planes[0].rowStride
+        val rowPadding = rowStride - pixelStride * width
+
+        val bitmap = Bitmap.createBitmap(
+            width + rowPadding / pixelStride,
+            height,
+            Bitmap.Config.ARGB_8888
+        )
+        bitmap.copyPixelsFromBuffer(buffer)
+        image.close()
+
+        saveBitmapToStorage(bitmap)
+    }
+
+    private fun captureLegacyScreenshot() {
+        try {
+            val displayMetrics = DisplayMetrics()
+            windowManager?.defaultDisplay?.getMetrics(displayMetrics)
+            val rootView = View(this).rootView
+            rootView.isDrawingCacheEnabled = true
+            val bitmap = rootView.drawingCache
+            saveBitmapToStorage(bitmap)
+            rootView.isDrawingCacheEnabled = false
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Toast.makeText(this, "Error capturing screenshot", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun saveBitmapToStorage(bitmap: Bitmap) {
+        val resolver = contentResolver
+        val contentValues = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, "Screenshot_${System.currentTimeMillis()}.png")
+            put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Screenshots")
+        }
+
+        val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+        if (uri != null) {
+            try {
+                resolver.openOutputStream(uri)?.use { fos ->
+                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, fos)
+                    fos.flush()
+                }
+                showRecyclerViewOverlay(uri)
+//                Toast.makeText(this, "Screenshot saved", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                e.printStackTrace()
+//                Toast.makeText(this, "Failed to save screenshot: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+//            Toast.makeText(this, "Failed to create MediaStore entry", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+
     override fun onCreate() {
         super.onCreate()
 
+        mediaProjectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         createNotificationChannel()
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
             startForeground(1, createNotification())
         } else {
             startForeground(
                 1, createNotification(),
-                FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
             )
         }
-        startForeground(1, createNotification())
+//        startForeground(1, createNotification())
 
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
 
@@ -179,14 +295,19 @@ class OverlaySearchService : Service() {
 
         btnSearch.setOnClickListener {
 
-            if (isRecyclerViewVisible) {
-                hideRecyclerViewOverlay()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+//                    startMediaProjection()
+                captureScreenshot()
             } else {
-                showRecyclerViewOverlay()
+                captureLegacyScreenshot()
             }
-        }
 
-        fetchItemsFromApi()
+//            if (isRecyclerViewVisible) {
+//                hideRecyclerViewOverlay()
+//            } else {
+//                showRecyclerViewOverlay()
+//            }
+        }
     }
 
     // Function to open a URL in the device's browser
@@ -205,38 +326,61 @@ class OverlaySearchService : Service() {
         }
     }
 
-    private fun fetchItemsFromApi() {
+    private fun fetchItemsFromApi(imageUri:Uri) {
         progressBar.visibility = View.VISIBLE
-        val call = RetrofitClient.api.fetchOverLayScreenItems(
-            apiKey = "08dfd65b433cbda8df28127070d9875cf3450203ecfc87939f579949aa3c1be7",
-            catalogName = "Lykdat",
-            imageUrl = "https://img.shopstyle-cdn.com/pim/b1/78/b178242102a268552b4a232af741dc9c_best.jpg"
-        )
-        call.enqueue(object : Callback<OverlayListResponse> {
-            override fun onResponse(
-                call: Call<OverlayListResponse>,
-                response: Response<OverlayListResponse>
-            ) {
-                progressBar.visibility = View.GONE
-                if (response.isSuccessful) {
-                    val items = response.body()
-                    val allSimilarProduct = ArrayList<SimilarProduct>()
-                    items?.data?.result_groups?.forEach { resultGroup ->
-                        allSimilarProduct.addAll(resultGroup.similar_products)
-                    }
-                    adapter.updateItems(allSimilarProduct)
-                } else {
-                    Toast.makeText(applicationContext, "Failed to fetch items", Toast.LENGTH_SHORT)
-                        .show()
+        val resolver = contentResolver
+        try {
+            // Convert URI to InputStream
+            val inputStream = resolver.openInputStream(imageUri)
+            val tempFile = File(cacheDir, "temp_image.png")
+
+            // Copy the input stream to a temporary file
+            inputStream?.use { input ->
+                FileOutputStream(tempFile).use { output ->
+                    input.copyTo(output)
                 }
             }
 
-            override fun onFailure(call: Call<OverlayListResponse>, t: Throwable) {
-                progressBar.visibility = View.GONE
-                Toast.makeText(applicationContext, "Error: ${t.message}", Toast.LENGTH_SHORT).show()
-            }
+            val requestBody = tempFile.asRequestBody("image/*".toMediaTypeOrNull())
+            val filePart = MultipartBody.Part.createFormData("image", tempFile.name, requestBody)
 
-        })
+            val apiKeyBody = RequestBody.create("text/plain".toMediaTypeOrNull(), API_KEY)
+
+            val call = RetrofitClient.api.fetchOverLayScreenItems(
+                apiKey = apiKeyBody,
+                image = filePart
+            )
+            call.enqueue(object : Callback<OverlayListResponse> {
+                override fun onResponse(
+                    call: Call<OverlayListResponse>,
+                    response: Response<OverlayListResponse>
+                ) {
+                    progressBar.visibility = View.GONE
+                    if (response.isSuccessful) {
+                        val items = response.body()
+                        val allSimilarProduct = ArrayList<SimilarProduct>()
+                        items?.data?.result_groups?.forEach { resultGroup ->
+                            allSimilarProduct.addAll(resultGroup.similar_products)
+                        }
+//                        Toast.makeText(applicationContext, "Items", Toast.LENGTH_SHORT).show()
+                        adapter.updateItems(allSimilarProduct)
+//                        Toast.makeText(applicationContext, "Success to fetch items", Toast.LENGTH_SHORT).show()
+                    } else {
+//                        Toast.makeText(applicationContext, "Failed to fetch items", Toast.LENGTH_SHORT).show()
+                    }
+                }
+
+                override fun onFailure(call: Call<OverlayListResponse>, t: Throwable) {
+                    progressBar.visibility = View.GONE
+                    Toast.makeText(applicationContext, "Error: ${t.message}", Toast.LENGTH_SHORT).show()
+                }
+
+            })
+        }catch (e:Exception){
+            e.printStackTrace()
+            Toast.makeText(this, "Failed to prepare file: ${e.message}", Toast.LENGTH_SHORT).show()
+
+        }
     }
 
     private fun setupRecyclerViewOverlay() {
@@ -267,8 +411,8 @@ class OverlaySearchService : Service() {
         recyclerParams.gravity = Gravity.CENTER
     }
 
-    private fun showRecyclerViewOverlay() {
-        if (!isRecyclerViewVisible) {
+    private fun showRecyclerViewOverlay(uri:Uri) {
+//        if (!isRecyclerViewVisible) {
             // Dynamically calculate screen width and height
             val displayMetrics = DisplayMetrics()
             val display = windowManager.defaultDisplay
@@ -290,7 +434,11 @@ class OverlaySearchService : Service() {
 
             windowManager.addView(recyclerViewOverlay, recyclerParams)
             isRecyclerViewVisible = true
-        }
+
+            fetchItemsFromApi(uri)
+//        }else{
+//            fetchItemsFromApi(uri)
+//        }
     }
 
     private fun hideRecyclerViewOverlay() {
@@ -325,18 +473,5 @@ class OverlaySearchService : Service() {
             .setContentText("Your floating widget is running.")
             .setSmallIcon(R.drawable.notification)
             .build()
-    }
-
-    private fun takeScreenshotAndSave(context: Context, onSaved: (Uri) -> Unit) {
-        val rootView = (getSystemService(Context.WINDOW_SERVICE) as WindowManager).defaultDisplay
-        rootView?.let {
-            // Take the screenshot as per the requirements
-            // Here, use actual view capturing logic depending on your specific requirement
-            val file = File(context.getExternalFilesDir(null), "screenshot.png")
-            FileOutputStream(file).use { out ->
-                // Your screenshot logic here
-                onSaved(Uri.fromFile(file))
-            }
-        }
     }
 }

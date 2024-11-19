@@ -1,7 +1,7 @@
 package com.overlayscreendesigntest.data
 
 data class SimilarProduct(
-    val brand_name: Any,
+    val brand_name: String,
     val category: String,
     val currency: String,
     val gender: String,
@@ -14,5 +14,5 @@ data class SimilarProduct(
     val score: Double,
     val sub_category: String,
     val url: String,
-    val vendor: Any
+    val vendor: String
 )

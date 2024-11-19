@@ -9,8 +9,6 @@ import androidx.appcompat.widget.AppCompatButton
 import androidx.recyclerview.widget.RecyclerView
 import com.bumptech.glide.Glide
 import com.overlayscreendesigntest.R
-import com.overlayscreendesigntest.data.OverlayListResponse
-import com.overlayscreendesigntest.data.ResultGroup
 import com.overlayscreendesigntest.data.SimilarProduct
 
 
@@ -48,7 +46,6 @@ class OverlayListAdapter(private var items: List<SimilarProduct>,
             stringBuilder.append(item.price)
 
             // Convert StringBuilder to a String
-            val result = stringBuilder.toString()
             name.text = item.name
             name.text = item.name
             price.text = stringBuilder.toString()

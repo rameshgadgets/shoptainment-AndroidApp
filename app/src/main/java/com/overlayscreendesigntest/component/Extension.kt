@@ -1,2 +1,3 @@
 package com.overlayscreendesigntest.component
 
+const val API_KEY = "08dfd65b433cbda8df28127070d9875cf3450203ecfc87939f579949aa3c1be7"
