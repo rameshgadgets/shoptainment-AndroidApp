@@ -2,6 +2,7 @@ package com.overlayscreendesigntest.screens
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
 import android.os.Bundle
 import androidx.activity.compose.setContent
@@ -64,6 +65,7 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.MutableState
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ProcessLifecycleOwner
@@ -98,8 +100,8 @@ class HomeActivity : AppCompatActivity() {
     ) {
         if (Settings.canDrawOverlays(this)) {
             Toast.makeText(this, "Overlay permission granted", Toast.LENGTH_SHORT).show()
-            startOverlayService()
-            isPowerOn.value = true
+//            startOverlayService()
+//            isPowerOn.value = true
         } else {
             Toast.makeText(this, "Overlay permission denied", Toast.LENGTH_SHORT).show()
         }
@@ -109,19 +111,35 @@ class HomeActivity : AppCompatActivity() {
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && Environment.isExternalStorageManager()) {
 //                startOverlayService()
-                Toast.makeText(this, "Manage All Files permission granted", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Manage All Files permission granted", Toast.LENGTH_SHORT)
+                    .show()
             } else {
-                Toast.makeText(this, "Manage All Files permission denied", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Manage All Files permission denied", Toast.LENGTH_SHORT)
+                    .show()
             }
         }
 
     private val requestStoragePermission =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
-            if (isGranted) {
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
+            if (permissions[android.Manifest.permission.WRITE_EXTERNAL_STORAGE] == true &&
+                permissions[android.Manifest.permission.READ_EXTERNAL_STORAGE] == true
+            ) {
+                // Both permissions are granted
+//                saveScreenshot()
                 Toast.makeText(this, "Permission granted.", Toast.LENGTH_SHORT).show()
             } else {
-                Toast.makeText(this, "Storage permission denied", Toast.LENGTH_SHORT).show()
+                // Permission denied
+                Toast.makeText(
+                    this,
+                    "Storage permissions are required to save screenshots",
+                    Toast.LENGTH_SHORT
+                ).show()
             }
+//            if (isGranted) {
+//                Toast.makeText(this, "Permission granted.", Toast.LENGTH_SHORT).show()
+//            } else {
+//                Toast.makeText(this, "Storage permission denied", Toast.LENGTH_SHORT).show()
+//            }
         }
 
     val requestMediaProjectionPermission = registerForActivityResult(
@@ -138,6 +156,9 @@ class HomeActivity : AppCompatActivity() {
             } else {
                 startService(intent)
             }
+            if(Build.VERSION.SDK_INT<= Build.VERSION_CODES.UPSIDE_DOWN_CAKE){
+                moveTaskToBack(true)
+            }
 //            startService(intent)
         } else {
             Toast.makeText(this, "MediaProjection permission denied", Toast.LENGTH_SHORT).show()
@@ -149,7 +170,29 @@ class HomeActivity : AppCompatActivity() {
             checkManageAllFilesPermission()
         } else if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             // Request WRITE_EXTERNAL_STORAGE for Android versions below Q
-            requestStoragePermission.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            if (ContextCompat.checkSelfPermission(
+                    this,
+                    android.Manifest.permission.WRITE_EXTERNAL_STORAGE
+                ) == PackageManager.PERMISSION_GRANTED &&
+                ContextCompat.checkSelfPermission(
+                    this,
+                    android.Manifest.permission.READ_EXTERNAL_STORAGE
+                ) == PackageManager.PERMISSION_GRANTED
+            ) {
+                // Permission is already granted
+                checkOverlayPermission()
+            } else {
+                // Request WRITE_EXTERNAL_STORAGE for Android versions below Q
+//                requestStoragePermission.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                requestStoragePermission.launch(
+                    arrayOf(
+                        android.Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                        android.Manifest.permission.READ_EXTERNAL_STORAGE
+                    )
+                )
+            }
+
+//            requestStoragePermission.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
         } else {
             // For Android Q, skip WRITE_EXTERNAL_STORAGE and directly check overlay permission
             checkOverlayPermission()
@@ -160,9 +203,10 @@ class HomeActivity : AppCompatActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             if (!Environment.isExternalStorageManager()) {
                 // Request Manage All Files permission
-                val manageFilesIntent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
-                    data = Uri.parse("package:$packageName")
-                }
+                val manageFilesIntent =
+                    Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                        data = Uri.parse("package:$packageName")
+                    }
                 requestManageAllFilesPermission.launch(manageFilesIntent)
             } else {
 //                Toast.makeText(this, "Manage All Files permission already granted", Toast.LENGTH_SHORT).show()
@@ -181,10 +225,17 @@ class HomeActivity : AppCompatActivity() {
                 Uri.parse("package:$packageName")
             )
             requestOverlayPermission.launch(overlayIntent)
-        }
-        else {
-            startOverlayService()
-            Toast.makeText(this, "Overlay permission already granted", Toast.LENGTH_SHORT).show()
+        } else {
+            if (isPowerOn.value) {
+                stopOverlayService(this, preferenceManager)
+                isPowerOn.value = false
+            } else {
+                startOverlayService()
+//                moveTaskToBack(true)
+                isPowerOn.value = true
+            }
+//            startOverlayService()
+//            Toast.makeText(this, "Overlay permission already granted", Toast.LENGTH_SHORT).show()
 ////            showOverlayButton()
         }
     }
@@ -193,27 +244,39 @@ class HomeActivity : AppCompatActivity() {
         val intent = Intent(this, OverlaySearchService::class.java)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(intent)
             val mediaProjectionManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
             val captureIntent = mediaProjectionManager.createScreenCaptureIntent()
             requestMediaProjectionPermission.launch(captureIntent)
+//            startForegroundService(serviceIntent)
         } else {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(intent)
-            } else {
+//            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+//                startForegroundService(intent)
+//            }else
                 startService(intent)
-            }
         }
+
+//        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+//            startForegroundService(intent)
+//            val mediaProjectionManager =
+//                getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+//            val captureIntent = mediaProjectionManager.createScreenCaptureIntent()
+//            requestMediaProjectionPermission.launch(captureIntent)
+//        } else {
+//            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+////                startForegroundService(intent)
+//                val mediaProjectionManager =
+//                    getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+//                val captureIntent = mediaProjectionManager.createScreenCaptureIntent()
+//                requestMediaProjectionPermission.launch(captureIntent)
+//            } else {
+//                startService(intent)
+//            }
+//        }
 
 //        ContextCompat.startForegroundService(context, intent)
 
         preferenceManager.setServiceRunning(true)
         preferenceManager.setOverlayVisible(true)
-    }
-
-    fun hasOverlayPermission():Boolean{
-        var dfg = Settings.canDrawOverlays(this@HomeActivity)
-        return dfg
     }
 }
 
@@ -222,7 +285,7 @@ class HomeActivity : AppCompatActivity() {
 fun DrawerWithHomeScreenBox(
     context: Context,
     preferenceManager: PreferenceManager,
-    isPowerOnState:MutableState<Boolean>
+    isPowerOnState: MutableState<Boolean>
 ) {
     val scope = rememberCoroutineScope()
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
@@ -246,7 +309,7 @@ fun DrawerWithHomeScreenBox(
                 isServiceRunning = preferenceManager.isServiceRunning()
                 if (isServiceRunning) {
                     isPowerOn = true
-                    (context as HomeActivity).startOverlayService()
+//                    (context as HomeActivity).startOverlayService()
                 } else {
                     isPowerOn = false
                 }
@@ -276,6 +339,7 @@ fun DrawerWithHomeScreenBox(
                 composable("home") {
                     ShoptainmentScreen(isPowerOn = isPowerOn,
                         onPowerButtonClick = {
+//                            (context as HomeActivity).isPowerOn.value = isPowerOn
                             (context as HomeActivity).checkStoragePermission()
 //                            if (!(context as HomeActivity).hasOverlayPermission()) {
 //                                context.checkStoragePermission()

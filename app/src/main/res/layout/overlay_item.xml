@@ -16,12 +16,21 @@
         android:paddingEnd="6dp"
         android:paddingBottom="10dp">
 
+        <ProgressBar
+            android:id="@+id/progressBar"
+            app:layout_constraintTop_toTopOf="@+id/item_image"
+            app:layout_constraintBottom_toBottomOf="@+id/item_image"
+            app:layout_constraintStart_toStartOf="@+id/item_image"
+            app:layout_constraintEnd_toEndOf="@+id/item_image"
+            android:layout_width="20dp"
+            android:layout_height="20dp" />
+
         <androidx.appcompat.widget.AppCompatImageView
             android:id="@+id/item_image"
             android:layout_width="60dp"
             android:layout_height="60dp"
             android:scaleType="centerCrop"
-            android:src="@drawable/img_cart"
+            android:src="@drawable/img_place_holder"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toTopOf="parent" />
