@@ -9,7 +9,6 @@ import android.app.Service
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
-import android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
 import android.hardware.display.VirtualDisplay
@@ -38,14 +37,17 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.widget.AppCompatImageView
 import androidx.core.app.NotificationCompat
-import androidx.core.content.FileProvider
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import com.overlayscreendesigntest.R
+import com.overlayscreendesigntest.data.CatalogItem
+import com.overlayscreendesigntest.data.CatalogSearchResponse
 import com.overlayscreendesigntest.data.OverlayListResponse
 import com.overlayscreendesigntest.data.SimilarProduct
-import com.overlayscreendesigntest.networking.RetrofitClient
-import com.overlayscreendesigntest.screens.HomeActivity
+import com.overlayscreendesigntest.networking.ApiService
+import com.overlayscreendesigntest.networking.RetrofitFactory
 import com.overlayscreendesigntest.screens.WebViewActivity
 import com.overlayscreendesigntest.screens.adapter.OverlayListAdapter
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -55,6 +57,7 @@ import okhttp3.RequestBody.Companion.asRequestBody
 import retrofit2.Call
 import retrofit2.Callback
 import retrofit2.Response
+import retrofit2.http.Multipart
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -228,11 +231,6 @@ class OverlaySearchService : Service() {
             setupRecyclerViewOverlay()
             captureScreenshot()
             setUpSearchBtnOverlay()
-//            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-//                    startMediaProjection()
-//            } else {
-//                captureLegacyScreenshot()
-//            }
         }
     }
 
@@ -390,7 +388,47 @@ class OverlaySearchService : Service() {
         }
     }
 
-    private fun fetchItemsFromApi(imageUri: Uri) {
+    private fun fetchGlobalSearchResult(filePart: MultipartBody.Part){
+        progressBar.visibility = View.VISIBLE
+        val apiKeyBody = RequestBody.create("text/plain".toMediaTypeOrNull(), API_KEY)
+                    val globalSearchApi = RetrofitFactory.createService(ApiService::class.java, "https://cloudapi.lykdat.com/")
+            globalSearchApi.fetchOverLayScreenItems(
+                apiKey = apiKeyBody,
+                image = filePart
+            ).enqueue(object : Callback<OverlayListResponse> {
+                override fun onResponse(
+                    call: Call<OverlayListResponse>,
+                    response: Response<OverlayListResponse>
+                ) {
+                    progressBar.visibility = View.GONE
+                    if (response.isSuccessful) {
+                        val items = response.body()
+                        val allSimilarProduct = ArrayList<SimilarProduct>()
+                        items?.data?.result_groups?.forEach { resultGroup ->
+                            allSimilarProduct.addAll(resultGroup.similar_products)
+                        }
+//                        Toast.makeText(applicationContext, "Items", Toast.LENGTH_SHORT).show()
+//                        adapter.updateItems(allSimilarProduct)
+                        adapter.updateItems(allSimilarProduct, fromGlobalSearch = true)
+//                        Toast.makeText(applicationContext, "Success to fetch items", Toast.LENGTH_SHORT).show()
+                    } else {
+                        txtMessage.visibility = View.VISIBLE
+                        txtMessage.text = "Failed to fetch items"
+//                        Toast.makeText(applicationContext, "Failed to fetch items", Toast.LENGTH_SHORT).show()
+                    }
+                }
+
+                override fun onFailure(call: Call<OverlayListResponse>, t: Throwable) {
+                    progressBar.visibility = View.GONE
+                    txtMessage.visibility = View.VISIBLE
+                    txtMessage.text = "${t.message}"
+//                    Toast.makeText(applicationContext, "Error: ${t.message}", Toast.LENGTH_SHORT).show()
+                }
+
+            })
+    }
+
+    private fun fetchItemsFromCatalogApi(imageUri: Uri) {
         progressBar.visibility = View.VISIBLE
         txtMessage.visibility = View.GONE
         val resolver = contentResolver
@@ -409,48 +447,74 @@ class OverlaySearchService : Service() {
             val requestBody = tempFile.asRequestBody("image/*".toMediaTypeOrNull())
             val filePart = MultipartBody.Part.createFormData("image", tempFile.name, requestBody)
 
-            val apiKeyBody = RequestBody.create("text/plain".toMediaTypeOrNull(), API_KEY)
-
-            val call = RetrofitClient.api.fetchOverLayScreenItems(
-                apiKey = apiKeyBody,
+            val catalogSearchApi = RetrofitFactory.createService(ApiService::class.java, "https://catalog-search.onrender.com/")
+            catalogSearchApi.catalogSearchAPI(
                 image = filePart
-            )
-            call.enqueue(object : Callback<OverlayListResponse> {
+            ).enqueue(object : Callback<CatalogSearchResponse> {
                 override fun onResponse(
-                    call: Call<OverlayListResponse>,
-                    response: Response<OverlayListResponse>
+                    call: Call<CatalogSearchResponse>,
+                    response: Response<CatalogSearchResponse>
                 ) {
                     progressBar.visibility = View.GONE
                     if (response.isSuccessful) {
-                        val items = response.body()
-                        val allSimilarProduct = ArrayList<SimilarProduct>()
-                        items?.data?.result_groups?.forEach { resultGroup ->
-                            allSimilarProduct.addAll(resultGroup.similar_products)
+                       val body = response.body()
+                        val resultsElement = body?.results
+                        Toast.makeText(applicationContext, "Items ${response.body()}", Toast.LENGTH_SHORT).show()
+                        if (resultsElement != null && resultsElement.isJsonArray) {
+                            val listType = object : TypeToken<List<CatalogItem>>() {}.type
+                            val catalogItems: List<CatalogItem> =
+                                Gson().fromJson(resultsElement, listType)
+                            if(catalogItems.isEmpty()){
+                                fetchGlobalSearchResult(filePart)
+                            }else{
+                                val mapped = catalogItems.map {
+                                    SimilarProduct(
+                                        brand_name = "",
+                                        category = "",
+                                        currency = "",
+                                        gender = "",
+                                        id = "",
+                                        images = listOf(it.image),
+                                        matching_image = it.image,
+                                        name = it.name,
+                                        price = "0.0",
+                                        reduced_price = "0.0",
+                                        score = 0.0,
+                                        sub_category = "",
+                                        url = it.link,
+                                        vendor = ""
+                                    )
+                                }
+//                                adapter.updateItems(mapped)
+                                adapter.updateItems(mapped, fromGlobalSearch = false)
+                            }
+                            // Success - update your adapter
+                        } else{
+                            fetchGlobalSearchResult(filePart)
                         }
-//                        Toast.makeText(applicationContext, "Items", Toast.LENGTH_SHORT).show()
-                        adapter.updateItems(allSimilarProduct)
-//                        Toast.makeText(applicationContext, "Success to fetch items", Toast.LENGTH_SHORT).show()
                     } else {
-                        txtMessage.visibility = View.VISIBLE
-                        txtMessage.text = "Failed to fetch items"
+                        fetchGlobalSearchResult(filePart)
+//                        txtMessage.visibility = View.VISIBLE
+//                        txtMessage.text = "Failed to fetch items"
 //                        Toast.makeText(applicationContext, "Failed to fetch items", Toast.LENGTH_SHORT).show()
                     }
                 }
 
-                override fun onFailure(call: Call<OverlayListResponse>, t: Throwable) {
-                    progressBar.visibility = View.GONE
-                    txtMessage.visibility = View.VISIBLE
-                    txtMessage.text = "${t.message}"
+                override fun onFailure(call: Call<CatalogSearchResponse>, t: Throwable) {
+//                    progressBar.visibility = View.GONE
+//                    txtMessage.visibility = View.VISIBLE
+//                    txtMessage.text = "${t.message}"
+                    fetchGlobalSearchResult(filePart)
 //                    Toast.makeText(applicationContext, "Error: ${t.message}", Toast.LENGTH_SHORT).show()
                 }
 
             })
         } catch (e: Exception) {
             e.printStackTrace()
+            progressBar.visibility = View.GONE
             txtMessage.visibility = View.VISIBLE
             txtMessage.text = "${e.message}"
 //            Toast.makeText(this, "Failed to prepare file: ${e.message}", Toast.LENGTH_SHORT).show()
-
         }
     }
 
@@ -589,7 +653,7 @@ class OverlaySearchService : Service() {
         windowManager.addView(recyclerViewOverlay, recyclerParams)
         isRecyclerViewVisible = true
 
-        fetchItemsFromApi(uri)
+        fetchItemsFromCatalogApi(uri)
     }
 
     private fun hideRecyclerViewOverlay() {

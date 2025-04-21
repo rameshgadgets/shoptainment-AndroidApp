@@ -67,9 +67,9 @@ class LoginActivity : AppCompatActivity() {
                 }, onForgotPasswordClick = {
                     startActivity(Intent(this, ForgotPasswordActivity::class.java))
                 }, onLoginClick = {
-                    preferenceManager.setLogin(true)
-                    startActivity(Intent(this, HomeActivity::class.java))
-                    finish()
+//                    preferenceManager.setLogin(true)
+//                    startActivity(Intent(this, HomeActivity::class.java))
+//                    finish()
 //                    startActivity(Intent(this, DrawerWithHomeActivity::class.java))
                 }, this)
             }

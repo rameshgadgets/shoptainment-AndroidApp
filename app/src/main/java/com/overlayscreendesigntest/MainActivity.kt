@@ -63,6 +63,10 @@ class MainActivity : ComponentActivity() {
                 }, onSignUpClick = {
                     // Start the LoginActivity when the Login button is clicked
                     startActivity(Intent(this, SignUpActivity::class.java))
+                }, onLoginAsGuestClick = {
+                    preferenceManager.setLogin(true)
+                    startActivity(Intent(this, HomeActivity::class.java))
+                    finish()
                 })
             }
         }
@@ -71,7 +75,7 @@ class MainActivity : ComponentActivity() {
 
 //@Preview(showBackground = true)
 @Composable
-fun ShopAppScreen(onLoginClick: () -> Unit, onSignUpClick: () -> Unit) {
+fun ShopAppScreen(onLoginClick: () -> Unit, onSignUpClick: () -> Unit, onLoginAsGuestClick: () -> Unit) {
     // Background color
 
     val screenHeight = LocalConfiguration.current.screenHeightDp.dp
@@ -175,7 +179,7 @@ fun ShopAppScreen(onLoginClick: () -> Unit, onSignUpClick: () -> Unit) {
                 // Login as guest Button with outline
                 OutlinedButton(
 
-                    onClick = {  },
+                    onClick = onLoginAsGuestClick,
                     shape = RoundedCornerShape(20.dp),
                     border = BorderStroke(1.dp, Color.White),
                     modifier = Modifier

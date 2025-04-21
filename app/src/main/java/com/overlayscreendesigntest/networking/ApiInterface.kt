@@ -1,5 +1,6 @@
 package com.overlayscreendesigntest.networking
 
+import com.overlayscreendesigntest.data.CatalogSearchResponse
 import com.overlayscreendesigntest.data.OverlayListResponse
 import okhttp3.MultipartBody
 import okhttp3.RequestBody
@@ -18,4 +19,16 @@ interface ApiService {
         @Part("api_key") apiKey: RequestBody,
         @Part image: MultipartBody.Part
     ): Call<OverlayListResponse>
+
+    @POST("v1/login")
+    fun loginAPI(
+        @Part("api_key") apiKey: RequestBody,
+        @Part image: MultipartBody.Part
+    ): Call<OverlayListResponse>
+
+    @Multipart
+    @POST("api/search/")
+    fun catalogSearchAPI(
+        @Part image: MultipartBody.Part
+    ): Call<CatalogSearchResponse>
 }
