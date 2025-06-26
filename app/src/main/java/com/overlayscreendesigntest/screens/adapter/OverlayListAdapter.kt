@@ -71,7 +71,7 @@ class OverlayListAdapter(
 
         fun bind(item: SimilarProduct) {
             name.text = item.name
-            price.text = "$ ${item.price}"
+            price.text = item.price
 
             Glide.with(itemImage.context)
                 .load(item.matching_image)

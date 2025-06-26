@@ -1,6 +1,7 @@
 package com.overlayscreendesigntest.networking
 
 import com.overlayscreendesigntest.data.CatalogSearchResponse
+import com.overlayscreendesigntest.data.GlobalSearchResponse
 import com.overlayscreendesigntest.data.OverlayListResponse
 import okhttp3.MultipartBody
 import okhttp3.RequestBody
@@ -14,11 +15,11 @@ import retrofit2.http.Part
 interface ApiService {
 
     @Multipart
-    @POST("v1/global/search")
+    @POST("api/global-search/")
     fun fetchOverLayScreenItems(
-        @Part("api_key") apiKey: RequestBody,
+//        @Part("api_key") apiKey: RequestBody,
         @Part image: MultipartBody.Part
-    ): Call<OverlayListResponse>
+    ): Call<GlobalSearchResponse>
 
     @POST("v1/login")
     fun loginAPI(

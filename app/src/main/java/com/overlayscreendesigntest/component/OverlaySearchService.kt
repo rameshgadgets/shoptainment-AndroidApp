@@ -44,6 +44,7 @@ import com.google.gson.reflect.TypeToken
 import com.overlayscreendesigntest.R
 import com.overlayscreendesigntest.data.CatalogItem
 import com.overlayscreendesigntest.data.CatalogSearchResponse
+import com.overlayscreendesigntest.data.GlobalSearchResponse
 import com.overlayscreendesigntest.data.OverlayListResponse
 import com.overlayscreendesigntest.data.SimilarProduct
 import com.overlayscreendesigntest.networking.ApiService
@@ -120,7 +121,7 @@ class OverlaySearchService : Service() {
         // Inflate the floating widget layout
     }
 
-    private fun setUpSearchBtnOverlay(){
+    private fun setUpSearchBtnOverlay() {
         overlaySearchBtnView = LayoutInflater.from(this).inflate(R.layout.overlay_button, null)
 
         val searchBtnParams = WindowManager.LayoutParams(
@@ -133,8 +134,6 @@ class OverlaySearchService : Service() {
         )
 
         searchBtnParams.gravity = Gravity.END or Gravity.BOTTOM
-        searchBtnParams.x = 0
-        searchBtnParams.y = 200
 
 //        // Set up the cancel view (Cancel button) but hide it initially
 //        cancelView = LayoutInflater.from(this).inflate(R.layout.cancel_btn, null)
@@ -172,17 +171,6 @@ class OverlaySearchService : Service() {
 
             override fun onTouch(v: View?, event: MotionEvent?): Boolean {
                 when (event?.action) {
-                    MotionEvent.ACTION_DOWN -> {
-                        // Save the initial position when touch down
-//                        cancelView.visibility = View.VISIBLE
-                        initialX = searchBtnParams.x
-                        initialY = searchBtnParams.y
-                        initialTouchX = event.rawX
-                        initialTouchY = event.rawY
-
-                        clickTime = System.currentTimeMillis()
-                        return true
-                    }
 
                     MotionEvent.ACTION_MOVE -> {
                         // Calculate the movement delta
@@ -246,18 +234,6 @@ class OverlaySearchService : Service() {
         imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
 
         mediaProjection?.apply {
-            registerCallback(object : MediaProjection.Callback() {
-                override fun onStop() {
-                    super.onStop()
-                    virtualDisplay?.release()
-                    virtualDisplay = null
-                    imageReader?.close()
-                    imageReader = null
-                    mediaProjection = null
-//                    Toast.makeText(this@OverlaySearchService, "MediaProjection stopped", Toast.LENGTH_SHORT).show()
-                }
-            }, null)
-
             virtualDisplay = createVirtualDisplay(
                 "ScreenCapture",
                 width,
@@ -275,7 +251,6 @@ class OverlaySearchService : Service() {
         val image = imageReader?.acquireLatestImage() ?: return
 
         val planes = image.planes
-        val buffer = planes[0].buffer
         val width = image.width
         val height = image.height
         val pixelStride = planes[0].pixelStride
@@ -285,60 +260,10 @@ class OverlaySearchService : Service() {
         val bitmap = Bitmap.createBitmap(
             width + rowPadding / pixelStride,
             height,
-            Bitmap.Config.ARGB_8888
+            Bitmap.Config.ALPHA_8
         )
-        bitmap.copyPixelsFromBuffer(buffer)
         image.close()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            saveBitmapToStorage(bitmap)
-        } else {
-            saveBitmapToStorageLegacy(bitmap)
-        }
-    }
-
-    private fun saveBitmapToStorageLegacy(bitmap: Bitmap) {
-        val resolver = contentResolver
-        val contentValues = ContentValues().apply {
-            put(
-                MediaStore.Images.Media.DISPLAY_NAME,
-                "Screenshot_${System.currentTimeMillis()}.png"
-            )
-            put(MediaStore.Images.Media.MIME_TYPE, "image/png")
-
-            // Use RELATIVE_PATH for Android 10 (API 29) and above
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Screenshots")
-            } else {
-                // For Android 9 and below, provide the absolute file path
-                val screenshotsDir =
-                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES).absolutePath + "/Screenshots"
-                val screenshotsDirFile = File(screenshotsDir)
-                if (!screenshotsDirFile.exists()) {
-                    screenshotsDirFile.mkdirs() // Create the directory if it doesn't exist
-                }
-                put(
-                    MediaStore.Images.Media.DATA,
-                    "$screenshotsDir/Screenshot_${System.currentTimeMillis()}.png"
-                )
-            }
-        }
-
-        val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
-        if (uri != null) {
-            try {
-                resolver.openOutputStream(uri)?.use { fos ->
-                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, fos)
-                    fos.flush()
-                }
-                showRecyclerViewOverlay(uri)
-//                Toast.makeText(this, "Screenshot saved", Toast.LENGTH_SHORT).show()
-            } catch (e: Exception) {
-                e.printStackTrace()
-//                Toast.makeText(this, "Failed to save screenshot: ${e.message}", Toast.LENGTH_SHORT).show()
-            }
-        } else {
-            Toast.makeText(this, "Failed to create MediaStore entry", Toast.LENGTH_SHORT).show()
-        }
+        saveBitmapToStorage(bitmap)
     }
 
     private fun saveBitmapToStorage(bitmap: Bitmap) {
@@ -348,17 +273,12 @@ class OverlaySearchService : Service() {
                 MediaStore.Images.Media.DISPLAY_NAME,
                 "Screenshot_${System.currentTimeMillis()}.png"
             )
-            put(MediaStore.Images.Media.MIME_TYPE, "image/png")
             put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Screenshots")
         }
 
         val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
         if (uri != null) {
             try {
-                resolver.openOutputStream(uri)?.use { fos ->
-                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, fos)
-                    fos.flush()
-                }
                 showRecyclerViewOverlay(uri)
 //                Toast.makeText(this, "Screenshot saved", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
@@ -388,44 +308,56 @@ class OverlaySearchService : Service() {
         }
     }
 
-    private fun fetchGlobalSearchResult(filePart: MultipartBody.Part){
+    private fun fetchGlobalSearchResult(filePart: MultipartBody.Part) {
         progressBar.visibility = View.VISIBLE
-        val apiKeyBody = RequestBody.create("text/plain".toMediaTypeOrNull(), API_KEY)
-                    val globalSearchApi = RetrofitFactory.createService(ApiService::class.java, "https://cloudapi.lykdat.com/")
-            globalSearchApi.fetchOverLayScreenItems(
-                apiKey = apiKeyBody,
-                image = filePart
-            ).enqueue(object : Callback<OverlayListResponse> {
-                override fun onResponse(
-                    call: Call<OverlayListResponse>,
-                    response: Response<OverlayListResponse>
-                ) {
-                    progressBar.visibility = View.GONE
-                    if (response.isSuccessful) {
-                        val items = response.body()
-                        val allSimilarProduct = ArrayList<SimilarProduct>()
-                        items?.data?.result_groups?.forEach { resultGroup ->
-                            allSimilarProduct.addAll(resultGroup.similar_products)
-                        }
-//                        Toast.makeText(applicationContext, "Items", Toast.LENGTH_SHORT).show()
-//                        adapter.updateItems(allSimilarProduct)
-                        adapter.updateItems(allSimilarProduct, fromGlobalSearch = true)
-//                        Toast.makeText(applicationContext, "Success to fetch items", Toast.LENGTH_SHORT).show()
-                    } else {
-                        txtMessage.visibility = View.VISIBLE
-                        txtMessage.text = "Failed to fetch items"
-//                        Toast.makeText(applicationContext, "Failed to fetch items", Toast.LENGTH_SHORT).show()
+        val globalSearchApi =
+            RetrofitFactory.createService(ApiService::class.java, GLOBAL_SEARCH_BASE_URL)
+        globalSearchApi.fetchOverLayScreenItems(
+//                apiKey = apiKeyBody,
+            image = filePart
+        ).enqueue(object : Callback<GlobalSearchResponse> {
+            override fun onResponse(
+                call: Call<GlobalSearchResponse>,
+                response: Response<GlobalSearchResponse>
+            ) {
+                progressBar.visibility = View.GONE
+                if (response.isSuccessful) {
+                    val globalResults = response.body()?.results ?: emptyList()
+                    val mapped = globalResults.map {
+                        SimilarProduct(
+                            brand_name = "",
+                            category = "",
+                            currency = "INR",
+                            gender = "",
+                            id = "",
+                            images = listOf(it.image),
+                            matching_image = if (it.image == "NA") "" else it.image,
+                            name = it.title,
+                            price = it.price,
+                            reduced_price = it.price,
+                            score = 0.0,
+                            sub_category = "",
+                            url = it.buy_link,
+                            vendor = ""
+                        )
                     }
-                }
-
-                override fun onFailure(call: Call<OverlayListResponse>, t: Throwable) {
-                    progressBar.visibility = View.GONE
+                    adapter.updateItems(mapped, fromGlobalSearch = true)
+//                        Toast.makeText(applicationContext, "Success to fetch items", Toast.LENGTH_SHORT).show()
+                } else {
                     txtMessage.visibility = View.VISIBLE
-                    txtMessage.text = "${t.message}"
-//                    Toast.makeText(applicationContext, "Error: ${t.message}", Toast.LENGTH_SHORT).show()
+                    txtMessage.text = "Failed to fetch items"
+//                        Toast.makeText(applicationContext, "Failed to fetch items", Toast.LENGTH_SHORT).show()
                 }
+            }
 
-            })
+            override fun onFailure(call: Call<GlobalSearchResponse>, t: Throwable) {
+                progressBar.visibility = View.GONE
+                txtMessage.visibility = View.VISIBLE
+                txtMessage.text = "Error: ${t.message}"
+//                    Toast.makeText(applicationContext, "Error: ${t.message}", Toast.LENGTH_SHORT).show()
+            }
+
+        })
     }
 
     private fun fetchItemsFromCatalogApi(imageUri: Uri) {
@@ -447,7 +379,8 @@ class OverlaySearchService : Service() {
             val requestBody = tempFile.asRequestBody("image/*".toMediaTypeOrNull())
             val filePart = MultipartBody.Part.createFormData("image", tempFile.name, requestBody)
 
-            val catalogSearchApi = RetrofitFactory.createService(ApiService::class.java, "https://catalog-search.onrender.com/")
+            val catalogSearchApi =
+                RetrofitFactory.createService(ApiService::class.java, CATALOG_SEARCH_BASE_URL)
             catalogSearchApi.catalogSearchAPI(
                 image = filePart
             ).enqueue(object : Callback<CatalogSearchResponse> {
@@ -457,16 +390,20 @@ class OverlaySearchService : Service() {
                 ) {
                     progressBar.visibility = View.GONE
                     if (response.isSuccessful) {
-                       val body = response.body()
+                        val body = response.body()
                         val resultsElement = body?.results
-                        Toast.makeText(applicationContext, "Items ${response.body()}", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(
+                            applicationContext,
+                            "Items ${response.body()}",
+                            Toast.LENGTH_SHORT
+                        ).show()
                         if (resultsElement != null && resultsElement.isJsonArray) {
                             val listType = object : TypeToken<List<CatalogItem>>() {}.type
                             val catalogItems: List<CatalogItem> =
                                 Gson().fromJson(resultsElement, listType)
-                            if(catalogItems.isEmpty()){
+                            if (catalogItems.isEmpty()) {
                                 fetchGlobalSearchResult(filePart)
-                            }else{
+                            } else {
                                 val mapped = catalogItems.map {
                                     SimilarProduct(
                                         brand_name = "",
@@ -489,10 +426,12 @@ class OverlaySearchService : Service() {
                                 adapter.updateItems(mapped, fromGlobalSearch = false)
                             }
                             // Success - update your adapter
-                        } else{
+                        } else {
+//                            Toast.makeText(applicationContext, "Global APi Calls", Toast.LENGTH_SHORT).show()
                             fetchGlobalSearchResult(filePart)
                         }
                     } else {
+//                        Toast.makeText(applicationContext, "Global APi Calls", Toast.LENGTH_SHORT).show()
                         fetchGlobalSearchResult(filePart)
 //                        txtMessage.visibility = View.VISIBLE
 //                        txtMessage.text = "Failed to fetch items"
@@ -504,6 +443,7 @@ class OverlaySearchService : Service() {
 //                    progressBar.visibility = View.GONE
 //                    txtMessage.visibility = View.VISIBLE
 //                    txtMessage.text = "${t.message}"
+//                    Toast.makeText(applicationContext, "Failure === ${t.message}", Toast.LENGTH_SHORT).show()
                     fetchGlobalSearchResult(filePart)
 //                    Toast.makeText(applicationContext, "Error: ${t.message}", Toast.LENGTH_SHORT).show()
                 }
@@ -559,7 +499,11 @@ class OverlaySearchService : Service() {
         webView.webViewClient = WebViewClient()  // To open URLs within the WebView
 
         webView.webViewClient = object : WebViewClient() {
-            override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+            override fun onPageStarted(
+                view: WebView?,
+                url: String?,
+                favicon: android.graphics.Bitmap?
+            ) {
 //                webView.visibility = View.GONE
                 progressBar.visibility = View.VISIBLE
             }
@@ -569,7 +513,10 @@ class OverlaySearchService : Service() {
 //                webView.visibility = View.VISIBLE
             }
 
-            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+            override fun shouldOverrideUrlLoading(
+                view: WebView?,
+                request: WebResourceRequest?
+            ): Boolean {
                 val url = request?.url.toString()
 
                 when {
@@ -577,18 +524,21 @@ class OverlaySearchService : Service() {
                         // Let WebView load the URL
                         return false
                     }
+
                     url.startsWith("mailto:") -> {
                         // Handle mailto: scheme
                         val intent = Intent(Intent.ACTION_SENDTO, Uri.parse(url))
                         startActivity(intent)
                         return true
                     }
+
                     url.startsWith("tel:") -> {
                         // Handle tel: scheme
                         val intent = Intent(Intent.ACTION_DIAL, Uri.parse(url))
                         startActivity(intent)
                         return true
                     }
+
                     else -> {
                         // Handle other custom schemes if needed
                         try {
@@ -658,8 +608,8 @@ class OverlaySearchService : Service() {
 
     private fun hideRecyclerViewOverlay() {
 //        if (isRecyclerViewVisible) {
-            windowManager.removeView(recyclerViewOverlay)
-            isRecyclerViewVisible = false
+        windowManager.removeView(recyclerViewOverlay)
+        isRecyclerViewVisible = false
 //        }
     }
 
