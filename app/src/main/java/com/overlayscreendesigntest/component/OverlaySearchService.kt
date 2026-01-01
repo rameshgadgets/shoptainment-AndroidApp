@@ -9,6 +9,7 @@ import android.app.Service
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
 import android.hardware.display.VirtualDisplay
@@ -88,17 +89,49 @@ class OverlaySearchService : Service() {
         return null
     }
 
+
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+
         if (intent?.action == "ACTION_MEDIA_PROJECTION_GRANTED") {
             val resultCode = intent.getIntExtra("resultCode", RESULT_CANCELED)
             val data = intent.getParcelableExtra<Intent>("data")
             if (resultCode == RESULT_OK && data != null) {
-                mediaProjection = mediaProjectionManager.getMediaProjection(resultCode, data)
+                startForegroundServiceWithNotification()
+                mediaProjection =
+                    mediaProjectionManager.getMediaProjection(resultCode, data)
+
+                mediaProjection?.registerCallback(
+                    mediaProjectionCallback,
+                    null
+                )
                 setupMediaProjection()
+            } else {
+                stopSelf()
             }
         }
+
         return START_STICKY
     }
+
+    private val mediaProjectionCallback = object : MediaProjection.Callback() {
+        override fun onStop() {
+            super.onStop()
+            Log.d("MediaProjection", "Projection stopped by system")
+
+            virtualDisplay?.release()
+            virtualDisplay = null
+
+            imageReader?.close()
+            imageReader = null
+
+            mediaProjection = null
+
+            stopSelf()
+        }
+    }
+
+
 
     override fun onCreate() {
         super.onCreate()
@@ -106,7 +139,7 @@ class OverlaySearchService : Service() {
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         mediaProjectionManager =
             getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        startForegroundServiceWithNotification()
+//        startForegroundServiceWithNotification()
 //        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
 //            startForeground(1, createNotification())
 //        } else {
@@ -277,7 +310,7 @@ class OverlaySearchService : Service() {
         }
 
         val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
-        if (uri != null) {
+        if (uri!=null) {
             try {
                 showRecyclerViewOverlay(uri)
 //                Toast.makeText(this, "Screenshot saved", Toast.LENGTH_SHORT).show()
@@ -331,7 +364,7 @@ class OverlaySearchService : Service() {
                             gender = "",
                             id = "",
                             images = listOf(it.image),
-                            matching_image = if (it.image == "NA") "" else it.image,
+                            matching_image = if (it.image=="NA") "" else it.image,
                             name = it.title,
                             price = it.price,
                             reduced_price = it.price,
@@ -397,7 +430,7 @@ class OverlaySearchService : Service() {
                             "Items ${response.body()}",
                             Toast.LENGTH_SHORT
                         ).show()
-                        if (resultsElement != null && resultsElement.isJsonArray) {
+                        if (resultsElement!=null && resultsElement.isJsonArray) {
                             val listType = object : TypeToken<List<CatalogItem>>() {}.type
                             val catalogItems: List<CatalogItem> =
                                 Gson().fromJson(resultsElement, listType)
@@ -595,7 +628,7 @@ class OverlaySearchService : Service() {
         )
         recyclerParams.gravity = Gravity.END
 
-        if (recyclerViewOverlay.parent != null) {
+        if (recyclerViewOverlay.parent!=null) {
             // Avoid adding the same view again
             windowManager.removeView(recyclerViewOverlay)
         }
@@ -615,6 +648,8 @@ class OverlaySearchService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        mediaProjection?.unregisterCallback(mediaProjectionCallback)
+        mediaProjection?.stop()
         if (::overlaySearchBtnView.isInitialized) windowManager.removeView(overlaySearchBtnView)
         if (isRecyclerViewVisible) windowManager.removeView(recyclerViewOverlay)
 //        if (::cancelView.isInitialized) windowManager.removeView(cancelView)
@@ -648,6 +683,17 @@ class OverlaySearchService : Service() {
             .build()
 
         // Start the service in the foreground
-        startForeground(1, notification)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                1,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+            )
+        } else {
+            startForeground(
+                1,
+                notification
+            )
+        }
     }
 }
